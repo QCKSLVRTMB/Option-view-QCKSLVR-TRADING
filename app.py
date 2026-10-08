@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -50,34 +50,65 @@ def iss_get_json(url, params=None, timeout=15):
     return None
 
 
-# ================= Рыночная цена (LAST) с ISS — кэш 3 сек =================
+# ================= Рыночная цена (LAST → MARKETPRICE → SETTLEPRICE → CLOSE) =================
 @st.cache_data(ttl=3, show_spinner=False)
 def fetch_last_price_from_iss(secid: str, asset_type_ui: str):
+    """
+    Возвращает максимально актуальную цену базового актива.
+    Приоритет: LAST → MARKETPRICE → SETTLEPRICE → CLOSE (D1).
+    """
     if not secid:
         return None
+
     if asset_type_ui in ("Фьючерс", "Валюта", "Товар"):
         engine, market = "futures", "forts"
     elif asset_type_ui == "Индекс":
         engine, market = "stock", "index"
     else:
         engine, market = "stock", "shares"
+
+    # ---- 1. marketdata: LAST → MARKETPRICE → SETTLEPRICE ----
     url = (f"https://iss.moex.com/iss/engines/{engine}/markets/{market}"
            f"/securities/{secid}.json")
     data = iss_get_json(url,
-                        params={"iss.meta": "off", "iss.only": "marketdata"})
-    if data is None:
-        return None
-    md = data.get("marketdata", {})
-    cols = md.get("columns", [])
-    rows = md.get("data", [])
-    if not rows or not cols:
-        return None
-    rd = dict(zip(cols, rows[0]))
-    for key in ("LAST", "MARKETPRICE", "LCLOSEPRICE",
-                "LASTTOPREVPRICE", "OPEN", "SETTLEPRICE"):
-        val = rd.get(key)
-        if val and val > 0:
-            return float(val)
+                        params={"iss.meta": "off",
+                                "iss.only": "marketdata"})
+    if data:
+        md = data.get("marketdata", {})
+        cols = md.get("columns", [])
+        rows = md.get("data", [])
+        if rows and cols:
+            rd = dict(zip(cols, rows[0]))
+            for key in ("LAST", "MARKETPRICE", "SETTLEPRICE"):
+                val = rd.get(key)
+                if val and val > 0:
+                    return float(val)
+
+    # ---- 2. Fallback: CLOSE последнего дневного бара ----
+    try:
+        end = datetime.now()
+        start = end - timedelta(days=7)
+        url_c = (f"https://iss.moex.com/iss/engines/{engine}/markets/{market}"
+                 f"/securities/{secid}/candles.json")
+        data_c = iss_get_json(url_c, params={
+            "from": start.strftime("%Y-%m-%d"),
+            "till": end.strftime("%Y-%m-%d"),
+            "interval": 24,
+            "iss.meta": "off",
+        })
+        if data_c:
+            cols = data_c.get("candles", {}).get("columns", [])
+            rows = data_c.get("candles", {}).get("data", [])
+            if rows and cols:
+                df = pd.DataFrame(rows, columns=cols)
+                if "close" in df.columns:
+                    df = df.dropna(subset=["close"])
+                    df = df[df["close"] > 0]
+                    if not df.empty:
+                        return float(df.iloc[-1]["close"])
+    except Exception:
+        pass
+
     return None
 
 

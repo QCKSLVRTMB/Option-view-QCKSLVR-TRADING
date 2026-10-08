@@ -17,6 +17,8 @@ st.markdown("""
 .block-container {padding-top: 0.8rem; padding-bottom: 2rem; max-width: 520px;}
 h1 {font-size: 1.15rem !important; font-weight: 700 !important; margin-bottom: .3rem !important;}
 [data-testid="stFileUploader"] section {padding: 8px !important;}
+/* Компактный спойлер статистики */
+details summary {font-size: .82rem !important; color: #5a6b78 !important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -66,9 +68,6 @@ def fetch_last_price_from_iss(secid: str, asset_type_ui: str):
         engine, market = "stock", "shares"
 
     # ---- 1. Основной источник: последняя D1-свеча ----
-    # Дневная свеча текущей сессии обновляется в реальном времени,
-    # её close == цена последней сделки. Это тот источник, который
-    # использовался в оригинальном коде и давал корректное значение.
     try:
         end = datetime.now()
         start = end - timedelta(days=20)
@@ -160,6 +159,8 @@ uploaded = st.file_uploader(
 
 if "alerts_df" not in st.session_state:
     st.session_state.alerts_df = None
+if "alerts_loaded_count" not in st.session_state:
+    st.session_state.alerts_loaded_count = 0
 
 if uploaded is not None:
     try:
@@ -189,13 +190,14 @@ if uploaded is not None:
             _xls = _xls.dropna(subset=["Тикер БА", "Уровень покупок",
                                        "Уровень продаж"])
             st.session_state.alerts_df = _xls
-            st.success(f"Загружено: {len(_xls)}")
+            st.session_state.alerts_loaded_count = len(_xls)
     except Exception as e:
         st.error(f"Ошибка: {e}")
 
 if st.session_state.alerts_df is not None:
     if st.button("Очистить", use_container_width=True, key="alerts_clear_btn"):
         st.session_state.alerts_df = None
+        st.session_state.alerts_loaded_count = 0
         st.rerun()
 
 
@@ -321,6 +323,8 @@ def render_alerts_live():
         return
 
     rows = _compute_rows(df_alerts)
+    n_buy = sum(1 for r in rows if r["buy_active"])
+    n_sell = sum(1 for r in rows if r["sell_active"])
 
     export_df = pd.DataFrame([{
         "Тикер БА": r["ticker"],
@@ -336,6 +340,7 @@ def render_alerts_live():
         "Продажа активна": r["sell_active"],
     } for r in rows])
 
+    # ---- Кнопка экспорта ----
     st.download_button(
         "📤 Экспорт в CSV",
         data=export_df.to_csv(index=False).encode("utf-8-sig"),
@@ -345,10 +350,14 @@ def render_alerts_live():
         key="alerts_export_csv",
     )
 
-    n_buy = sum(1 for r in rows if r["buy_active"])
-    n_sell = sum(1 for r in rows if r["sell_active"])
-    st.caption(f"Всего: {len(rows)} · Покупка: {n_buy} · Продажа: {n_sell}")
+    # ---- Статистика в свёрнутом спойлере ----
+    _loaded = st.session_state.get("alerts_loaded_count", len(rows))
+    with st.expander(f"ℹ️ Статистика · Покупка: {n_buy} · Продажа: {n_sell}",
+                     expanded=False):
+        st.write(f"Загружено: {_loaded}")
+        st.caption(f"Всего: {len(rows)} · Покупка: {n_buy} · Продажа: {n_sell}")
 
+    # ---- Карточки ----
     for r in rows:
         st.markdown(render_card(r), unsafe_allow_html=True)
 

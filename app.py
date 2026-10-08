@@ -14,8 +14,9 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-.block-container {padding-top: 0.8rem; padding-bottom: 2rem; max-width: 520px;}
-h1 {font-size: 1.15rem !important; font-weight: 700 !important; margin-bottom: .3rem !important;}
+.block-container {padding-top: 3rem; padding-bottom: 2rem; max-width: 520px;}
+h1 {font-size: 1.15rem !important; font-weight: 700 !important;
+    margin-top: 1.2rem !important; margin-bottom: .3rem !important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -146,17 +147,11 @@ def resolve_underlying_secid(asset_code: str, asset_type_ui: str):
 # ================= Загрузка Google Sheets =================
 @st.cache_data(ttl=60, show_spinner=False)
 def load_google_sheet(sheet_url: str) -> pd.DataFrame:
-    """
-    Загружает Google-таблицу по ссылке экспорта.
-    Поддерживает форматы CSV и XLSX.
-    """
     try:
-        # Пробуем как CSV
         df = pd.read_csv(sheet_url)
         return df
     except Exception:
         try:
-            # Если не CSV — пробуем как Excel
             df = pd.read_excel(sheet_url)
             return df
         except Exception as e:
@@ -165,10 +160,12 @@ def load_google_sheet(sheet_url: str) -> pd.DataFrame:
 
 
 # ================= UI =================
+# Отступ сверху, чтобы заголовок не обрезался на смартфоне
+st.markdown("<div style='height:2.5rem;'></div>", unsafe_allow_html=True)
+
 st.title("Оповещения")
 
 # 🔗 Ссылка на экспорт Google Таблицы (CSV или XLSX)
-# ЗАМЕНИТЕ НА АКТУАЛЬНУЮ ССЫЛКУ ИЗ "Файл → Поделиться → Опубликовать в интернете"
 SHEET_EXPORT_URL = (
     "https://docs.google.com/spreadsheets/d/"
     "1BhFbdaXC3tgoURYkuyZeOJkm16FSC5xM/export?format=xlsx"
@@ -179,7 +176,6 @@ if "alerts_df" not in st.session_state:
 if "alerts_loaded_count" not in st.session_state:
     st.session_state.alerts_loaded_count = 0
 
-# Загружаем таблицу
 _xls = load_google_sheet(SHEET_EXPORT_URL)
 
 if not _xls.empty:

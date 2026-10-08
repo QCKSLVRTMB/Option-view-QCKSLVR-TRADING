@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components  # noqa: F401
 import requests
 import pandas as pd
 import time
@@ -9,13 +8,15 @@ from urllib3.util.retry import Retry
 
 st.set_page_config(
     page_title="MOEX Оповещения",
-    layout="wide",
+    layout="centered",
     initial_sidebar_state="collapsed",
 )
 
 st.markdown("""
 <style>
-.block-container {padding-top: 1rem; padding-bottom: 2rem; max-width: 1400px;}
+.block-container {padding-top: 0.8rem; padding-bottom: 2rem; max-width: 520px;}
+h1 {font-size: 1.15rem !important; font-weight: 700 !important; margin-bottom: .3rem !important;}
+[data-testid="stFileUploader"] section {padding: 8px !important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -116,14 +117,13 @@ def resolve_underlying_secid(asset_code: str, asset_type_ui: str):
 
 
 # ================= UI =================
-st.title("Оповещения по уровням")
-st.caption("Сравнение рыночной цены (LAST) с уровнями покупок / продаж. "
-           "Автообновление каждые 3 секунды.")
+st.title("Оповещения")
 
 uploaded = st.file_uploader(
-    "Excel-файл (.xlsx) — колонки: Тикер БА · Категория БА · Уровень покупок · Уровень продаж",
+    "Excel",
     type=["xlsx", "xls"],
-    key="alerts_xlsx_uploader")
+    key="alerts_xlsx_uploader",
+    label_visibility="collapsed")
 
 if "alerts_df" not in st.session_state:
     st.session_state.alerts_df = None
@@ -147,7 +147,7 @@ if uploaded is not None:
                     "Уровень покупок", "Уровень продаж"]
         missing = [c for c in required if c not in _xls.columns]
         if missing:
-            st.error(f"В файле нет колонок: {', '.join(missing)}")
+            st.error(f"Нет колонок: {', '.join(missing)}")
         else:
             _xls["Уровень покупок"] = pd.to_numeric(
                 _xls["Уровень покупок"], errors="coerce")
@@ -156,17 +156,14 @@ if uploaded is not None:
             _xls = _xls.dropna(subset=["Тикер БА", "Уровень покупок",
                                        "Уровень продаж"])
             st.session_state.alerts_df = _xls
-            st.success(f"Загружено {len(_xls)} строк.")
+            st.success(f"Загружено: {len(_xls)}")
     except Exception as e:
-        st.error(f"Не удалось прочитать файл: {e}")
+        st.error(f"Ошибка: {e}")
 
 if st.session_state.alerts_df is not None:
-    _hc1, _hc2 = st.columns([1, 5])
-    with _hc1:
-        if st.button("Очистить таблицу", use_container_width=True,
-                     key="alerts_clear_btn"):
-            st.session_state.alerts_df = None
-            st.rerun()
+    if st.button("Очистить", use_container_width=True, key="alerts_clear_btn"):
+        st.session_state.alerts_df = None
+        st.rerun()
 
 
 # ================= Подготовка данных =================
@@ -222,62 +219,61 @@ def render_card(r: dict) -> str:
     buy_dev_str = f"{buy_dev_pct:+.2f} %" if buy_dev_pct is not None else "—"
     sell_dev_str = f"{sell_dev_pct:+.2f} %" if sell_dev_pct is not None else "—"
 
-    buy_bg   = "#d9ffe0" if buy_active  else "#f0f4f8"
-    buy_fg   = "#0a3d0e" if buy_active  else "#7f9bb3"
-    buy_brd  = "#00a651" if buy_active  else "#e2edf4"
-    sell_bg  = "#d9ffe0" if sell_active else "#f0f4f8"
-    sell_fg  = "#0a3d0e" if sell_active else "#7f9bb3"
-    sell_brd = "#00a651" if sell_active else "#e2edf4"
-    buy_mark  = "☑" if buy_active  else "☐"
-    sell_mark = "☑" if sell_active else "☐"
+    buy_bg  = "#0a8f3c" if buy_active  else "#e6e9ec"
+    buy_fg  = "#ffffff" if buy_active  else "#5a6b78"
+    sell_bg = "#0a8f3c" if sell_active else "#e6e9ec"
+    sell_fg = "#ffffff" if sell_active else "#5a6b78"
+    buy_mark  = "✓" if buy_active  else "·"
+    sell_mark = "✓" if sell_active else "·"
 
     return f"""
-    <div style="border:1px solid #e2edf4; border-radius:14px; padding:12px 14px;
-                background:#fff; margin-bottom:10px;
-                box-shadow:0 2px 8px rgba(0,0,0,.05);">
-      <div style="font-size:1.15rem; font-weight:800; color:#1a3b4f;
-                  line-height:1.1;">{ticker}</div>
-      <div style="font-size:.7rem; color:#7f9bb3; margin-top:2px;
-                  text-transform:uppercase; letter-spacing:.05em;">
+    <div style="border:1px solid #cfd6dc; border-radius:8px; padding:10px 12px;
+                background:#ffffff; margin-bottom:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline;">
+        <div style="font-size:1.15rem; font-weight:700; color:#111; line-height:1.1;">
+          {ticker}</div>
+        <div style="font-size:1.05rem; font-weight:700; color:#111;">
+          {price_str}</div>
+      </div>
+      <div style="font-size:.68rem; color:#5a6b78; margin-top:2px;
+                  text-transform:uppercase; letter-spacing:.06em;">
         {category}</div>
-      <div style="font-size:1rem; font-weight:700; color:#1c5a7a;
-                  margin:6px 0 10px 0;">{price_str}</div>
 
-      <div style="display:flex; gap:8px;">
-        <div style="flex:1; background:#f3e8ff; border-radius:10px;
-                    padding:8px 10px;">
-          <div style="font-size:.6rem; color:#5c0099; font-weight:800;
-                      text-transform:uppercase; letter-spacing:.05em;">
-            Уровень покупок</div>
-          <div style="font-size:1.1rem; font-weight:800; color:#5c0099;
+      <div style="display:flex; gap:6px; margin-top:10px;">
+        <div style="flex:1; background:#f2f4f6; border:1px solid #d8dee3;
+                    border-radius:6px; padding:7px 9px;">
+          <div style="font-size:.6rem; color:#333; font-weight:700;
+                      text-transform:uppercase; letter-spacing:.06em;">
+            Покупка</div>
+          <div style="font-size:1.02rem; font-weight:700; color:#111;
                       line-height:1.2; margin-top:2px;">{lvl_buy:.2f}</div>
-          <div style="font-size:.78rem; color:#7a5c99; font-weight:600;
-                      margin-top:1px;">{buy_dev_str}</div>
+          <div style="font-size:.76rem; color:#333; margin-top:1px;">
+            {buy_dev_str}</div>
         </div>
-        <div style="flex:1; background:#fff0fe; border-radius:10px;
-                    padding:8px 10px;">
-          <div style="font-size:.6rem; color:#a3139e; font-weight:800;
-                      text-transform:uppercase; letter-spacing:.05em;">
-            Уровень продаж</div>
-          <div style="font-size:1.1rem; font-weight:800; color:#a3139e;
+        <div style="flex:1; background:#f2f4f6; border:1px solid #d8dee3;
+                    border-radius:6px; padding:7px 9px;">
+          <div style="font-size:.6rem; color:#333; font-weight:700;
+                      text-transform:uppercase; letter-spacing:.06em;">
+            Продажа</div>
+          <div style="font-size:1.02rem; font-weight:700; color:#111;
                       line-height:1.2; margin-top:2px;">{lvl_sell:.2f}</div>
-          <div style="font-size:.78rem; color:#997a99; font-weight:600;
-                      margin-top:1px;">{sell_dev_str}</div>
+          <div style="font-size:.76rem; color:#333; margin-top:1px;">
+            {sell_dev_str}</div>
         </div>
       </div>
 
-      <div style="display:flex; gap:8px; margin-top:10px;">
-        <div style="flex:1; text-align:center; padding:7px; border-radius:8px;
-                    font-size:.85rem; font-weight:800;
+      <div style="display:flex; gap:6px; margin-top:8px;">
+        <div style="flex:1; text-align:center; padding:6px;
+                    border-radius:6px; font-size:.82rem; font-weight:700;
                     background:{buy_bg}; color:{buy_fg};
-                    border:1px solid {buy_brd};">
-          {buy_mark} Покупка
+                    letter-spacing:.05em;">
+          {buy_mark} ПОКУПКА
         </div>
-        <div style="flex:1; text-align:center; padding:7px; border-radius:8px;
-                    font-size:.85rem; font-weight:800;
+        <div style="flex:1; text-align:center; padding:6px;
+                    border-radius:6px; font-size:.82rem; font-weight:700;
                     background:{sell_bg}; color:{sell_fg};
-                    border:1px solid {sell_brd};">
-          {sell_mark} Продажа
+                    letter-spacing:.05em;">
+          {sell_mark} ПРОДАЖА
         </div>
       </div>
     </div>
@@ -293,7 +289,6 @@ def render_alerts_live():
 
     rows = _compute_rows(df_alerts)
 
-    # --- Экспорт CSV + сводка сверху ---
     export_df = pd.DataFrame([{
         "Тикер БА": r["ticker"],
         "Категория БА": r["category"],
@@ -308,38 +303,23 @@ def render_alerts_live():
         "Продажа активна": r["sell_active"],
     } for r in rows])
 
-    _ec1, _ec2 = st.columns([1.2, 4])
-    with _ec1:
-        st.download_button(
-            "📤 Экспорт в CSV",
-            data=export_df.to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"alerts_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-            use_container_width=True,
-            key="alerts_export_csv",
-        )
-    with _ec2:
-        n_buy = sum(1 for r in rows if r["buy_active"])
-        n_sell = sum(1 for r in rows if r["sell_active"])
-        st.caption(
-            f"Всего: **{len(rows)}** · "
-            f"🟢 Покупка активна: **{n_buy}** · "
-            f"🟢 Продажа активна: **{n_sell}** · "
-            f"🔄 обновление 3 сек")
+    st.download_button(
+        "📤 Экспорт в CSV",
+        data=export_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"alerts_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        use_container_width=True,
+        key="alerts_export_csv",
+    )
 
-    # --- Сетка карточек 2×N ---
-    for i in range(0, len(rows), 2):
-        cols = st.columns(2, gap="small")
-        for j in range(2):
-            if i + j >= len(rows):
-                break
-            with cols[j]:
-                st.markdown(render_card(rows[i + j]),
-                            unsafe_allow_html=True)
+    n_buy = sum(1 for r in rows if r["buy_active"])
+    n_sell = sum(1 for r in rows if r["sell_active"])
+    st.caption(f"Всего: {len(rows)} · Покупка: {n_buy} · Продажа: {n_sell}")
+
+    for r in rows:
+        st.markdown(render_card(r), unsafe_allow_html=True)
 
 
 # ================= Запуск =================
 if st.session_state.get("alerts_df") is not None:
     render_alerts_live()
-else:
-    st.info("Загрузите Excel-файл, чтобы увидеть оповещения в виде карточек.")

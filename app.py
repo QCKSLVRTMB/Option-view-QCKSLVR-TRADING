@@ -50,13 +50,11 @@ def iss_get_json(url, params=None, timeout=15):
     return None
 
 
-# ================= Рыночная цена (LAST → MARKETPRICE → SETTLEPRICE → CLOSE) =================
+# ================= Рыночная цена =================
+# Приоритет: D1-свеча (CLOSE последнего дня = текущая цена в сессии)
+#            → marketdata: LAST → MARKETPRICE → SETTLEPRICE
 @st.cache_data(ttl=3, show_spinner=False)
 def fetch_last_price_from_iss(secid: str, asset_type_ui: str):
-    """
-    Возвращает максимально актуальную цену базового актива.
-    Приоритет: LAST → MARKETPRICE → SETTLEPRICE → CLOSE (D1).
-    """
     if not secid:
         return None
 
@@ -67,27 +65,13 @@ def fetch_last_price_from_iss(secid: str, asset_type_ui: str):
     else:
         engine, market = "stock", "shares"
 
-    # ---- 1. marketdata: LAST → MARKETPRICE → SETTLEPRICE ----
-    url = (f"https://iss.moex.com/iss/engines/{engine}/markets/{market}"
-           f"/securities/{secid}.json")
-    data = iss_get_json(url,
-                        params={"iss.meta": "off",
-                                "iss.only": "marketdata"})
-    if data:
-        md = data.get("marketdata", {})
-        cols = md.get("columns", [])
-        rows = md.get("data", [])
-        if rows and cols:
-            rd = dict(zip(cols, rows[0]))
-            for key in ("LAST", "MARKETPRICE", "SETTLEPRICE"):
-                val = rd.get(key)
-                if val and val > 0:
-                    return float(val)
-
-    # ---- 2. Fallback: CLOSE последнего дневного бара ----
+    # ---- 1. Основной источник: последняя D1-свеча ----
+    # Дневная свеча текущей сессии обновляется в реальном времени,
+    # её close == цена последней сделки. Это тот источник, который
+    # использовался в оригинальном коде и давал корректное значение.
     try:
         end = datetime.now()
-        start = end - timedelta(days=7)
+        start = end - timedelta(days=20)
         url_c = (f"https://iss.moex.com/iss/engines/{engine}/markets/{market}"
                  f"/securities/{secid}/candles.json")
         data_c = iss_get_json(url_c, params={
@@ -104,10 +88,28 @@ def fetch_last_price_from_iss(secid: str, asset_type_ui: str):
                 if "close" in df.columns:
                     df = df.dropna(subset=["close"])
                     df = df[df["close"] > 0]
+                    df = df.sort_values("begin")
                     if not df.empty:
                         return float(df.iloc[-1]["close"])
     except Exception:
         pass
+
+    # ---- 2. Fallback: marketdata ----
+    url = (f"https://iss.moex.com/iss/engines/{engine}/markets/{market}"
+           f"/securities/{secid}.json")
+    data = iss_get_json(url,
+                        params={"iss.meta": "off",
+                                "iss.only": "marketdata"})
+    if data:
+        md = data.get("marketdata", {})
+        cols = md.get("columns", [])
+        rows = md.get("data", [])
+        if rows and cols:
+            rd = dict(zip(cols, rows[0]))
+            for key in ("LAST", "MARKETPRICE", "SETTLEPRICE"):
+                val = rd.get(key)
+                if val and val > 0:
+                    return float(val)
 
     return None
 

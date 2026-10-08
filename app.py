@@ -16,8 +16,6 @@ st.markdown("""
 <style>
 .block-container {padding-top: 0.8rem; padding-bottom: 2rem; max-width: 520px;}
 h1 {font-size: 1.15rem !important; font-weight: 700 !important; margin-bottom: .3rem !important;}
-[data-testid="stFileUploader"] section {padding: 8px !important;}
-details summary {font-size: .82rem !important; color: #5a6b78 !important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -145,51 +143,73 @@ def resolve_underlying_secid(asset_code: str, asset_type_ui: str):
     return asset_code.upper()
 
 
+# ================= Загрузка Google Sheets =================
+@st.cache_data(ttl=60, show_spinner=False)
+def load_google_sheet(sheet_url: str) -> pd.DataFrame:
+    """
+    Загружает Google-таблицу по ссылке экспорта.
+    Поддерживает форматы CSV и XLSX.
+    """
+    try:
+        # Пробуем как CSV
+        df = pd.read_csv(sheet_url)
+        return df
+    except Exception:
+        try:
+            # Если не CSV — пробуем как Excel
+            df = pd.read_excel(sheet_url)
+            return df
+        except Exception as e:
+            st.error(f"Не удалось загрузить таблицу: {e}")
+            return pd.DataFrame()
+
+
 # ================= UI =================
 st.title("Оповещения")
 
-uploaded = st.file_uploader(
-    "Excel",
-    type=["xlsx", "xls"],
-    key="alerts_xlsx_uploader",
-    label_visibility="collapsed")
+# 🔗 Ссылка на экспорт Google Таблицы (CSV или XLSX)
+# ЗАМЕНИТЕ НА АКТУАЛЬНУЮ ССЫЛКУ ИЗ "Файл → Поделиться → Опубликовать в интернете"
+SHEET_EXPORT_URL = (
+    "https://docs.google.com/spreadsheets/d/"
+    "1BhFbdaXC3tgoURYkuyZeOJkm16FSC5xM/export?format=xlsx"
+)
 
 if "alerts_df" not in st.session_state:
     st.session_state.alerts_df = None
 if "alerts_loaded_count" not in st.session_state:
     st.session_state.alerts_loaded_count = 0
 
-if uploaded is not None:
-    try:
-        _xls = pd.read_excel(uploaded)
-        _col_map = {}
-        for c in _xls.columns:
-            c_str = str(c).strip().lower()
-            if "тикер" in c_str:
-                _col_map[c] = "Тикер БА"
-            elif "категор" in c_str:
-                _col_map[c] = "Категория БА"
-            elif "покуп" in c_str or "bid" in c_str:
-                _col_map[c] = "Уровень покупок"
-            elif "продаж" in c_str or "ask" in c_str:
-                _col_map[c] = "Уровень продаж"
-        _xls = _xls.rename(columns=_col_map)
-        required = ["Тикер БА", "Категория БА",
-                    "Уровень покупок", "Уровень продаж"]
-        missing = [c for c in required if c not in _xls.columns]
-        if missing:
-            st.error(f"Нет колонок: {', '.join(missing)}")
-        else:
-            _xls["Уровень покупок"] = pd.to_numeric(
-                _xls["Уровень покупок"], errors="coerce")
-            _xls["Уровень продаж"] = pd.to_numeric(
-                _xls["Уровень продаж"], errors="coerce")
-            _xls = _xls.dropna(subset=["Тикер БА", "Уровень покупок",
-                                       "Уровень продаж"])
-            st.session_state.alerts_df = _xls
-            st.session_state.alerts_loaded_count = len(_xls)
-    except Exception as e:
-        st.error(f"Ошибка: {e}")
+# Загружаем таблицу
+_xls = load_google_sheet(SHEET_EXPORT_URL)
+
+if not _xls.empty:
+    _col_map = {}
+    for c in _xls.columns:
+        c_str = str(c).strip().lower()
+        if "тикер" in c_str:
+            _col_map[c] = "Тикер БА"
+        elif "категор" in c_str:
+            _col_map[c] = "Категория БА"
+        elif "покуп" in c_str or "bid" in c_str:
+            _col_map[c] = "Уровень покупок"
+        elif "продаж" in c_str or "ask" in c_str:
+            _col_map[c] = "Уровень продаж"
+    _xls = _xls.rename(columns=_col_map)
+
+    required = ["Тикер БА", "Категория БА",
+                "Уровень покупок", "Уровень продаж"]
+    missing = [c for c in required if c not in _xls.columns]
+    if missing:
+        st.error(f"В таблице нет колонок: {', '.join(missing)}")
+    else:
+        _xls["Уровень покупок"] = pd.to_numeric(
+            _xls["Уровень покупок"], errors="coerce")
+        _xls["Уровень продаж"] = pd.to_numeric(
+            _xls["Уровень продаж"], errors="coerce")
+        _xls = _xls.dropna(subset=["Тикер БА", "Уровень покупок",
+                                   "Уровень продаж"])
+        st.session_state.alerts_df = _xls
+        st.session_state.alerts_loaded_count = len(_xls)
 
 
 # ================= Подготовка данных =================
@@ -317,41 +337,10 @@ def render_alerts_live():
     n_buy = sum(1 for r in rows if r["buy_active"])
     n_sell = sum(1 for r in rows if r["sell_active"])
 
-    export_df = pd.DataFrame([{
-        "Тикер БА": r["ticker"],
-        "Категория БА": r["category"],
-        "Уровень покупок": r["lvl_buy"],
-        "Откл. покупок, %": (round(r["buy_dev_pct"], 4)
-                             if r["buy_dev_pct"] is not None else None),
-        "Уровень продаж": r["lvl_sell"],
-        "Откл. продаж, %": (round(r["sell_dev_pct"], 4)
-                            if r["sell_dev_pct"] is not None else None),
-        "Рыночная цена": r["market_price"],
-        "Покупка активна": r["buy_active"],
-        "Продажа активна": r["sell_active"],
-    } for r in rows])
-
-    # ---- Всё управление и статистика — под спойлером ----
     _loaded = st.session_state.get("alerts_loaded_count", len(rows))
-    with st.expander(f"ℹ️ Статистика · Покупка: {n_buy} · Продажа: {n_sell}",
-                     expanded=False):
-        st.write(f"Загружено: {_loaded}")
-        st.caption(f"Всего: {len(rows)} · Покупка: {n_buy} · Продажа: {n_sell}")
-        st.download_button(
-            "📤 Экспорт в CSV",
-            data=export_df.to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"alerts_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-            use_container_width=True,
-            key="alerts_export_csv",
-        )
-        if st.button("Очистить", use_container_width=True,
-                     key="alerts_clear_btn"):
-            st.session_state.alerts_df = None
-            st.session_state.alerts_loaded_count = 0
-            st.rerun()
+    st.caption(f"Загружено: {_loaded} · "
+               f"Всего: {len(rows)} · Покупка: {n_buy} · Продажа: {n_sell}")
 
-    # ---- Карточки ----
     for r in rows:
         st.markdown(render_card(r), unsafe_allow_html=True)
 
@@ -359,3 +348,5 @@ def render_alerts_live():
 # ================= Запуск =================
 if st.session_state.get("alerts_df") is not None:
     render_alerts_live()
+else:
+    st.info("Таблица не загружена. Проверьте доступ к Google Sheets.")

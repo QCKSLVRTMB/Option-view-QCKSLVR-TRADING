@@ -17,7 +17,6 @@ st.markdown("""
 .block-container {padding-top: 0.8rem; padding-bottom: 2rem; max-width: 520px;}
 h1 {font-size: 1.15rem !important; font-weight: 700 !important; margin-bottom: .3rem !important;}
 [data-testid="stFileUploader"] section {padding: 8px !important;}
-/* Компактный спойлер статистики */
 details summary {font-size: .82rem !important; color: #5a6b78 !important;}
 </style>
 """, unsafe_allow_html=True)
@@ -53,8 +52,6 @@ def iss_get_json(url, params=None, timeout=15):
 
 
 # ================= Рыночная цена =================
-# Приоритет: D1-свеча (CLOSE последнего дня = текущая цена в сессии)
-#            → marketdata: LAST → MARKETPRICE → SETTLEPRICE
 @st.cache_data(ttl=3, show_spinner=False)
 def fetch_last_price_from_iss(secid: str, asset_type_ui: str):
     if not secid:
@@ -193,12 +190,6 @@ if uploaded is not None:
             st.session_state.alerts_loaded_count = len(_xls)
     except Exception as e:
         st.error(f"Ошибка: {e}")
-
-if st.session_state.alerts_df is not None:
-    if st.button("Очистить", use_container_width=True, key="alerts_clear_btn"):
-        st.session_state.alerts_df = None
-        st.session_state.alerts_loaded_count = 0
-        st.rerun()
 
 
 # ================= Подготовка данных =================
@@ -340,22 +331,25 @@ def render_alerts_live():
         "Продажа активна": r["sell_active"],
     } for r in rows])
 
-    # ---- Кнопка экспорта ----
-    st.download_button(
-        "📤 Экспорт в CSV",
-        data=export_df.to_csv(index=False).encode("utf-8-sig"),
-        file_name=f"alerts_{datetime.now().strftime('%Y%m%d')}.csv",
-        mime="text/csv",
-        use_container_width=True,
-        key="alerts_export_csv",
-    )
-
-    # ---- Статистика в свёрнутом спойлере ----
+    # ---- Всё управление и статистика — под спойлером ----
     _loaded = st.session_state.get("alerts_loaded_count", len(rows))
     with st.expander(f"ℹ️ Статистика · Покупка: {n_buy} · Продажа: {n_sell}",
                      expanded=False):
         st.write(f"Загружено: {_loaded}")
         st.caption(f"Всего: {len(rows)} · Покупка: {n_buy} · Продажа: {n_sell}")
+        st.download_button(
+            "📤 Экспорт в CSV",
+            data=export_df.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"alerts_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="alerts_export_csv",
+        )
+        if st.button("Очистить", use_container_width=True,
+                     key="alerts_clear_btn"):
+            st.session_state.alerts_df = None
+            st.session_state.alerts_loaded_count = 0
+            st.rerun()
 
     # ---- Карточки ----
     for r in rows:

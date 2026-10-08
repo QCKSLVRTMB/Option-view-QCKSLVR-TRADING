@@ -20,7 +20,7 @@ h1 {font-size: 1.15rem !important; font-weight: 700 !important;
 </style>
 """, unsafe_allow_html=True)
 
-# ================= Устойчивый HTTP-клиент к ISS =================
+# ================= HTTP-клиент ISS =================
 def _make_iss_session():
     s = requests.Session()
     retry = Retry(total=3, backoff_factor=0.5,
@@ -37,16 +37,16 @@ def _make_iss_session():
 _ISS_SESSION = _make_iss_session()
 
 
-def iss_get_json(url, params=None, timeout=15):
-    for attempt in range(3):
+def iss_get_json(url, params=None, timeout=10):
+    for attempt in range(2):
         try:
             r = _ISS_SESSION.get(url, params=params, timeout=timeout)
             r.raise_for_status()
             return r.json()
         except requests.exceptions.RequestException:
-            if attempt == 2:
+            if attempt == 1:
                 return None
-            time.sleep(0.5 * (attempt + 1))
+            time.sleep(0.3)
     return None
 
 
@@ -63,7 +63,7 @@ def fetch_last_price_from_iss(secid: str, asset_type_ui: str):
     else:
         engine, market = "stock", "shares"
 
-    # ---- 1. Основной источник: последняя D1-свеча ----
+    # 1. D1-свеча
     try:
         end = datetime.now()
         start = end - timedelta(days=20)
@@ -89,7 +89,7 @@ def fetch_last_price_from_iss(secid: str, asset_type_ui: str):
     except Exception:
         pass
 
-    # ---- 2. Fallback: marketdata ----
+    # 2. Fallback
     url = (f"https://iss.moex.com/iss/engines/{engine}/markets/{market}"
            f"/securities/{secid}.json")
     data = iss_get_json(url,
@@ -105,7 +105,6 @@ def fetch_last_price_from_iss(secid: str, asset_type_ui: str):
                 val = rd.get(key)
                 if val and val > 0:
                     return float(val)
-
     return None
 
 
@@ -145,40 +144,62 @@ def resolve_underlying_secid(asset_code: str, asset_type_ui: str):
 
 
 # ================= Загрузка Google Sheets =================
-@st.cache_data(ttl=60, show_spinner=False)
-def load_google_sheet(sheet_url: str) -> pd.DataFrame:
+@st.cache_data(ttl=30, show_spinner=False)
+def load_google_sheet_cached(sheet_url: str, cache_buster: int):
+    """cache_buster — число, меняется при нажатии «Обновить», сбрасывает кэш."""
     try:
+        if sheet_url.endswith(".xlsx") or "format=xlsx" in sheet_url:
+            return pd.read_excel(sheet_url, engine="openpyxl"), None
         df = pd.read_csv(sheet_url)
-        return df
-    except Exception:
-        try:
-            df = pd.read_excel(sheet_url)
-            return df
-        except Exception as e:
-            st.error(f"Не удалось загрузить таблицу: {e}")
-            return pd.DataFrame()
+        return df, None
+    except requests.exceptions.Timeout:
+        return pd.DataFrame(), "Таймаут при обращении к Google Sheets"
+    except Exception as e:
+        return pd.DataFrame(), f"Ошибка загрузки: {e}"
 
 
 # ================= UI =================
-# Отступ сверху, чтобы заголовок не обрезался на смартфоне
 st.markdown("<div style='height:2.5rem;'></div>", unsafe_allow_html=True)
 
 st.title("Оповещения")
 
-# 🔗 Ссылка на экспорт Google Таблицы (CSV или XLSX)
 SHEET_EXPORT_URL = (
     "https://docs.google.com/spreadsheets/d/"
     "1BhFbdaXC3tgoURYkuyZeOJkm16FSC5xM/export?format=xlsx"
 )
 
+# Инициализация состояния
 if "alerts_df" not in st.session_state:
     st.session_state.alerts_df = None
 if "alerts_loaded_count" not in st.session_state:
     st.session_state.alerts_loaded_count = 0
+if "sheet_cache_buster" not in st.session_state:
+    st.session_state.sheet_cache_buster = 0
+if "sheet_error" not in st.session_state:
+    st.session_state.sheet_error = None
+if "sheet_loaded_at" not in st.session_state:
+    st.session_state.sheet_loaded_at = None
 
-_xls = load_google_sheet(SHEET_EXPORT_URL)
+# Кнопка ручного обновления — единственный источник запроса к Google
+_col_r1, _col_r2 = st.columns([1, 3])
+with _col_r1:
+    if st.button("Обновить", use_container_width=True, key="manual_refresh"):
+        st.session_state.sheet_cache_buster += 1
+        st.cache_data.clear()  # сбрасываем кэш цен и таблицы
+        st.rerun()
+with _col_r2:
+    if st.session_state.sheet_loaded_at:
+        st.caption(f"Обновлено: {st.session_state.sheet_loaded_at}")
 
-if not _xls.empty:
+# Загружаем таблицу
+_xls, _err = load_google_sheet_cached(
+    SHEET_EXPORT_URL,
+    st.session_state.sheet_cache_buster
+)
+
+if _err:
+    st.session_state.sheet_error = _err
+elif not _xls.empty:
     _col_map = {}
     for c in _xls.columns:
         c_str = str(c).strip().lower()
@@ -196,7 +217,7 @@ if not _xls.empty:
                 "Уровень покупок", "Уровень продаж"]
     missing = [c for c in required if c not in _xls.columns]
     if missing:
-        st.error(f"В таблице нет колонок: {', '.join(missing)}")
+        st.session_state.sheet_error = f"В таблице нет колонок: {', '.join(missing)}"
     else:
         _xls["Уровень покупок"] = pd.to_numeric(
             _xls["Уровень покупок"], errors="coerce")
@@ -206,6 +227,11 @@ if not _xls.empty:
                                    "Уровень продаж"])
         st.session_state.alerts_df = _xls
         st.session_state.alerts_loaded_count = len(_xls)
+        st.session_state.sheet_error = None
+        st.session_state.sheet_loaded_at = datetime.now().strftime("%H:%M:%S")
+
+if st.session_state.sheet_error:
+    st.warning(st.session_state.sheet_error)
 
 
 # ================= Подготовка данных =================
@@ -322,18 +348,21 @@ def render_card(r: dict) -> str:
     """
 
 
-# ================= Живой рендер с автообновлением =================
-@st.fragment(run_every="3s")
+# ================= Живой рендер =================
+@st.fragment(run_every="5s")
 def render_alerts_live():
     df_alerts = st.session_state.get("alerts_df")
     if df_alerts is None or df_alerts.empty:
         return
 
     rows = _compute_rows(df_alerts)
+    if not rows:
+        return
+
     n_buy = sum(1 for r in rows if r["buy_active"])
     n_sell = sum(1 for r in rows if r["sell_active"])
-
     _loaded = st.session_state.get("alerts_loaded_count", len(rows))
+
     st.caption(f"Загружено: {_loaded} · "
                f"Всего: {len(rows)} · Покупка: {n_buy} · Продажа: {n_sell}")
 
@@ -344,5 +373,5 @@ def render_alerts_live():
 # ================= Запуск =================
 if st.session_state.get("alerts_df") is not None:
     render_alerts_live()
-else:
-    st.info("Таблица не загружена. Проверьте доступ к Google Sheets.")
+elif not st.session_state.sheet_error:
+    st.info("Данные загружаются…")

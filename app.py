@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 import time
 from datetime import date, datetime, timedelta
+from io import BytesIO
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -148,9 +149,12 @@ def resolve_underlying_secid(asset_code: str, asset_type_ui: str):
 def load_google_sheet_cached(sheet_url: str, cache_buster: int):
     """cache_buster — число, меняется при нажатии «Обновить», сбрасывает кэш."""
     try:
-        if sheet_url.endswith(".xlsx") or "format=xlsx" in sheet_url:
-            return pd.read_excel(sheet_url, engine="openpyxl"), None
-        df = pd.read_csv(sheet_url)
+        # Скачиваем файл через requests, чтобы избежать проблем с redirect и SSL
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(sheet_url, headers=headers, timeout=20)
+        resp.raise_for_status()
+        # Читаем XLSX из байтового потока
+        df = pd.read_excel(BytesIO(resp.content), engine="openpyxl")
         return df, None
     except requests.exceptions.Timeout:
         return pd.DataFrame(), "Таймаут при обращении к Google Sheets"
@@ -163,9 +167,11 @@ st.markdown("<div style='height:2.5rem;'></div>", unsafe_allow_html=True)
 
 st.title("Оповещения")
 
+# 🔗 Ссылка на экспорт Google Таблицы (XLSX)
 SHEET_EXPORT_URL = (
-    "https://docs.google.com/spreadsheets/d/"
-    "1BhFbdaXC3tgoURYkuyZeOJkm16FSC5xM/export?format=xlsx"
+    "https://docs.google.com/spreadsheets/d/e/"
+    "2PACX-1vRKISFld2M8tFEEE1o1Fo5nQgHP6qMmOFu57JDmi-t-Y4Xj67N5SQP9uQ02JW2Ixyd663zewMYY1hfx"
+    "/pub?output=xlsx"
 )
 
 # Инициализация состояния
@@ -180,12 +186,12 @@ if "sheet_error" not in st.session_state:
 if "sheet_loaded_at" not in st.session_state:
     st.session_state.sheet_loaded_at = None
 
-# Кнопка ручного обновления — единственный источник запроса к Google
+# Кнопка ручного обновления
 _col_r1, _col_r2 = st.columns([1, 3])
 with _col_r1:
     if st.button("Обновить", use_container_width=True, key="manual_refresh"):
         st.session_state.sheet_cache_buster += 1
-        st.cache_data.clear()  # сбрасываем кэш цен и таблицы
+        st.cache_data.clear()
         st.rerun()
 with _col_r2:
     if st.session_state.sheet_loaded_at:
